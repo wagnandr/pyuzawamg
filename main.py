@@ -1,4 +1,5 @@
 import dolfin as df
+import numpy as np
 from block import block_assemble, block_bc, block_mat, block_vec
 from block.iterative import MinRes, ConjGrad, Richardson
 from block.algebraic.petsc import LU, AMG, LumpedInvDiag, InvDiag
@@ -119,20 +120,56 @@ def create_S_hat_inv(V, omega):
     return S_hat_inv
 
 
+def estimate_omega(A_hat_inv, S_hat_inv, A):
+    n,m = A.blocks.shape
+    assert n == m, "only symmetric matrices supported"
+    '''
+    C = A[n-1,n-1]
+    BT = block_mat(A[0:n-1,n-1:n])
+    B = block_mat(A[n-1:n,0:n-1])
+    def op(x):
+        y0 = (B * A_hat_inv * BT * block_vec(1, [x]))[0]
+        y1 = C * x
+        return S_hat_inv * (y0 + y1)
+    x = C.create_vec()
+    op(x)
+    '''
+    S_hat_inv = block_mat(1, 1, [[S_hat_inv]])
+    C = block_mat(1, 1, [[-A[n-1,n-1]]])
+    BT = block_mat(A[0:n-1,n-1:n])
+    B = block_mat(A[n-1:n,0:n-1])
+    def op(x):
+        y0 = (B * A_hat_inv * BT * x)
+        y1 = C * x
+        return S_hat_inv * (y0 + y1)
+    x = C.create_vec()
+    x.randomize()
+    num_iterations = 10
+    for _ in range(num_iterations):
+        x_next = op(x) 
+        alpha = x_next.inner(x)
+        print(alpha)
+        x_next_norm = x_next.norm()
+        x = (1./x_next_norm) * x_next 
+    return alpha
+
+
+
 if __name__ == '__main__':
     #omega=1/0.55849
     omega=0.4
     presmoothing_steps = postsmoothing_steps = 3 * 1 
     w_cycles=2
+    stab = True 
 
     N = 4 * 8 * 1
     mesh_coarse = df.RectangleMesh(df.Point(-4,-1), df.Point(4,1), 4*N, N, 'left')
-    V_u_coarse = df.FunctionSpace(mesh_coarse, 'P', 1)
+    V_u_coarse = df.FunctionSpace(mesh_coarse, 'P', 2)
     V_p_coarse = df.FunctionSpace(mesh_coarse, 'P', 1)
     W_coarse = [V_u_coarse, V_u_coarse, V_p_coarse]
 
     mesh_fine = df.refine(mesh_coarse)
-    V_u_fine = df.FunctionSpace(mesh_fine, 'P', 1)
+    V_u_fine = df.FunctionSpace(mesh_fine, 'P', 2)
     V_p_fine = df.FunctionSpace(mesh_fine, 'P', 1)
     W_fine = [V_u_fine, V_u_fine, V_p_fine]
 
@@ -178,19 +215,24 @@ if __name__ == '__main__':
         []
     ]
 
-    A_fine, b_fine = assemble_system(W_fine, bcs_fine, stab=True)
+    A_fine, b_fine = assemble_system(W_fine, bcs_fine, stab=stab)
     #block_bc(bcs_fine, False).apply(A_fine, b_fine)
 
-    A_coarse, b_coarse = assemble_system(W_coarse, bcs_coarse, stab=True)
+    A_coarse, b_coarse = assemble_system(W_coarse, bcs_coarse, stab=stab)
     #block_bc(bcs_coarse, False).apply(A_coarse, b_coarse)
 
     Ainv_fine = diagonal_preconditioned_minres(A_fine, W_fine)
     Ainv_coarse = diagonal_preconditioned_minres(A_coarse, W_coarse)
 
     A_hat_inv = create_A_hat_inv(A_fine)
-    S_hat_inv = create_S_hat_inv(W_fine[-1], omega)
+    S_hat_inv = create_S_hat_inv(W_fine[-1], 1.)
+    omega_inv = estimate_omega(A_hat_inv, S_hat_inv, A_fine)
+    S_hat_inv = create_S_hat_inv(W_fine[-1], 1./omega_inv)
+
     smoother_lower = SmootherLower(A_fine, A_hat_inv, S_hat_inv)
     smoother_upper = SmootherUpper(A_fine, A_hat_inv, S_hat_inv)
+
+
 
     x = Ainv_fine.create_vec()
 
