@@ -149,14 +149,82 @@ def estimate_omega(A_hat_inv, S_hat_inv, A, num_iterations=10):
     return alpha
 
 
+class MGSolver:
+    def __init__(self, presmoother, postsmoother, coarse_grid_solver, A, P) -> None:
+        self.presmoother = presmoother 
+        self.postsmoother = postsmoother 
+        self.coarse_grid_solver = coarse_grid_solver
+        self.A = A 
+        self.P = P 
+        self.num_iterations = 10
+        self.num_presmoothing_steps = 3 
+        self.num_postsmoothing_steps = 3 
+        self.num_w_cycles = 2
+        self.projection_nullspace = lambda x: 1 
+        self.show = 1
+    
+    def solve(self, b, x=None):
+        # provide initial guess
+        if x is None:
+            x = self.A[0].create_vec()
+        else:
+            x = x.copy()
+        # calculate initial residual
+        r = b - self.A[0] * x
+        res_prev = r.norm()
+        # iterate mg solver
+        for j in range(self.num_iterations):
+            x = self._solve(x, b, 0)
+            # calculate residual:
+            r = b - self.A[0] * x
+            self.projection_nullspace(r)
+            res = r.norm()
+            if self.show > 0:
+                print(f'{j} - rate = {res / res_prev} ({res})')
+            res_prev = res
+        return x
+    
+    @property
+    def num_levels(self):
+        return len(self.A)
 
-if __name__ == '__main__':
+    def _solve(self, x, b_fine, k):
+        x = x.copy()
+        # solve on finest level
+        if k + 1 == self.num_levels:
+            return self.coarse_grid_solver * b_fine
+        # extract local solver components:
+        A_fine = self.A[k]
+        A_coarse = self.A[k+1]
+        presmoother = self.presmoother[k]
+        postsmoother = self.postsmoother[k]
+        P = self.P[k]
+        # presmoothing steps
+        for _ in range(self.num_presmoothing_steps):
+            presmoother.mult(b_fine, x)
+        # coarse grid correction
+        for _ in range(self.num_w_cycles):
+            r_fine = b_fine - A_fine * x
+            r_coarse = A_coarse.create_vec()
+            d_coarse = A_coarse.create_vec()
+            P.tmult(r_fine, r_coarse) 
+            d_coarse = self._solve(d_coarse, r_coarse, k+1)
+            d_fine = A_fine.create_vec()
+            P.mult(d_coarse, d_fine) 
+            x += d_fine
+        # postmoothing steps
+        for _ in range(self.num_postsmoothing_steps):
+            postsmoother.mult(b_fine, x)
+        return x
+
+
+def demo():
     #omega=1/0.55849
     omega=0.4
     presmoothing_steps = postsmoothing_steps = 3 * 1 
     w_cycles=2
-    stab = False 
-    deg_velocity = 2
+    stab = True 
+    deg_velocity = 1
 
     N = 4 * 8 * 1
     mesh_coarse = df.RectangleMesh(df.Point(-4,-1), df.Point(4,1), 4*N, N, 'left')
@@ -223,6 +291,7 @@ if __name__ == '__main__':
     A_hat_inv = create_A_hat_inv(A_fine)
     S_hat_inv = create_S_hat_inv(W_fine[-1], 1.)
     omega = estimate_omega(A_hat_inv, S_hat_inv, A_fine)
+    omega *= 1.
     S_hat_inv = create_S_hat_inv(W_fine[-1], omega)
 
     smoother_lower = SmootherLower(A_fine, A_hat_inv, S_hat_inv)
@@ -287,3 +356,107 @@ if __name__ == '__main__':
     #file_u.write(uy, 0)
     file_p = df.File('output/stokes_p.pvd')
     file_p << p, 0
+
+
+def demo2():
+    #omega=1/0.55849
+    omega=0.4
+    presmoothing_steps = postsmoothing_steps = 3 * 1 
+    w_cycles=2
+    stab = True 
+    deg_velocity = 1
+
+    N = 4 * 8 * 1
+    mesh_coarse = df.RectangleMesh(df.Point(-4,-1), df.Point(4,1), 4*N, N, 'left')
+    V_u_coarse = df.FunctionSpace(mesh_coarse, 'P', deg_velocity)
+    V_p_coarse = df.FunctionSpace(mesh_coarse, 'P', 1)
+    W_coarse = [V_u_coarse, V_u_coarse, V_p_coarse]
+
+    mesh_fine = df.refine(mesh_coarse)
+    V_u_fine = df.FunctionSpace(mesh_fine, 'P', deg_velocity)
+    V_p_fine = df.FunctionSpace(mesh_fine, 'P', 1)
+    W_fine = [V_u_fine, V_u_fine, V_p_fine]
+
+    noslip_value = df.Constant(0)
+    noslip_domain = df.CompiledSubDomain('x[1] >= 1-1e-8 || x[1] <= -1+1e-8')
+    bc0x_fine = df.DirichletBC(V_u_fine, noslip_value, noslip_domain )
+    bc0y_fine = df.DirichletBC(V_u_fine, noslip_value, noslip_domain )
+
+    inflow_domain = df.CompiledSubDomain('x[0] <= -4+1e-8')
+    inflow_valuex = df.Expression('-(x[1]+1)*(x[1]-1)', degree=2)
+    inflow_valuey = df.Constant(0)
+    bc1x_fine = df.DirichletBC(V_u_fine, inflow_valuex, inflow_domain)
+    bc1y_fine = df.DirichletBC(V_u_fine, inflow_valuey, inflow_domain)
+
+    bc0x_coarse = df.DirichletBC(V_u_coarse, df.Constant(0), noslip_domain )
+    bc0y_coarse = df.DirichletBC(V_u_coarse, df.Constant(0), noslip_domain )
+    bc1x_coarse = df.DirichletBC(V_u_coarse, df.Constant(0), inflow_domain)
+    bc1y_coarse = df.DirichletBC(V_u_coarse, df.Constant(0), inflow_domain)
+
+    solution = df.Function(V_u_fine)
+    solution.interpolate(inflow_valuex)
+
+    P = block_prolongation(W_coarse, W_fine)
+
+    bcs_fine = [
+        [bc0x_fine, bc1x_fine],
+        [bc0y_fine, bc1y_fine],
+        []
+    ]
+
+    bcs_coarse = [
+        [bc0x_coarse, bc1x_coarse],
+        [bc0y_coarse, bc1y_coarse],
+        []
+    ]
+
+    A_fine, b_fine = assemble_system(W_fine, bcs_fine, stab=stab)
+
+    A_coarse, _ = assemble_system(W_coarse, bcs_coarse, stab=stab)
+
+    Ainv_coarse = diagonal_preconditioned_minres(A_coarse, W_coarse)
+
+    A_hat_inv = create_A_hat_inv(A_fine)
+    S_hat_inv = create_S_hat_inv(W_fine[-1], 1.)
+    omega = estimate_omega(A_hat_inv, S_hat_inv, A_fine)
+    omega *= 1.
+    S_hat_inv = create_S_hat_inv(W_fine[-1], omega)
+
+    presmoother = [SmootherLower(A_fine, A_hat_inv, S_hat_inv)]
+    postsmoother = [SmootherUpper(A_fine, A_hat_inv, S_hat_inv)]
+
+    solver = MGSolver(
+        presmoother=presmoother,
+        postsmoother=postsmoother,
+        coarse_grid_solver=Ainv_coarse,
+        A=[A_fine, A_coarse],
+        P=[P]
+    )
+    solver.projection_nullspace = lambda x: zero_mean(mesh_fine, x[-1])
+
+    x = A_fine.create_vec()
+    x.randomize()
+
+    solver.solve(b_fine, x)
+
+    # Schur evaluation S = 0.5 * S + 0.5 * S = 0.5 * S1 + 0.5 * S2
+
+    ux = df.Function(V_u_fine, name='vx')
+    uy = df.Function(V_u_fine, name='vy')
+    ux.vector()[:] = x[0][:]
+    uy.vector()[:] = x[1][:]
+
+    p = df.Function(V_p_fine, name='pressure')
+    p.vector()[:] = x[2][:]
+
+    file_ux = df.File('output/stokes_ux.pvd')
+    file_uy = df.File('output/stokes_uy.pvd')
+    file_ux << ux, 0
+    file_uy << uy, 0
+    file_p = df.File('output/stokes_p.pvd')
+    file_p << p, 0
+
+
+if __name__ == '__main__':
+    # demo()
+    demo2()
