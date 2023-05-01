@@ -116,39 +116,34 @@ def create_A_hat_inv(A):
 def create_S_hat_inv(V, omega):
     u,v = df.TrialFunction(V), df.TestFunction(V)
     M = df.assemble(u*v*df.dx)
-    S_hat_inv = omega*LumpedInvDiag(M)
+    S_hat_inv = 1/omega*LumpedInvDiag(M)
     return S_hat_inv
 
 
-def estimate_omega(A_hat_inv, S_hat_inv, A):
+def estimate_omega(A_hat_inv, S_hat_inv, A, num_iterations=10):
     n,m = A.blocks.shape
     assert n == m, "only symmetric matrices supported"
-    '''
-    C = A[n-1,n-1]
-    BT = block_mat(A[0:n-1,n-1:n])
-    B = block_mat(A[n-1:n,0:n-1])
-    def op(x):
-        y0 = (B * A_hat_inv * BT * block_vec(1, [x]))[0]
-        y1 = C * x
-        return S_hat_inv * (y0 + y1)
-    x = C.create_vec()
-    op(x)
-    '''
+    # extract the operator
     S_hat_inv = block_mat(1, 1, [[S_hat_inv]])
     C = block_mat(1, 1, [[-A[n-1,n-1]]])
     BT = block_mat(A[0:n-1,n-1:n])
     B = block_mat(A[n-1:n,0:n-1])
+    # apply our problem
     def op(x):
-        y0 = (B * A_hat_inv * BT * x)
-        y1 = C * x
-        return S_hat_inv * (y0 + y1)
-    x = C.create_vec()
+        y = (B * A_hat_inv * BT * x)
+        if not C[0,0] == 0:
+            y += C * x
+        return S_hat_inv * y
+    # We create a block vector for our power iteration. 
+    # Note that 
+    #   x = C.create_vec()
+    # would not work if C = 0.
+    x = block_vec(1, [A.create_vec()[-1]])
     x.randomize()
-    num_iterations = 10
     for _ in range(num_iterations):
         x_next = op(x) 
+        # rayleigh quotient
         alpha = x_next.inner(x)
-        print(alpha)
         x_next_norm = x_next.norm()
         x = (1./x_next_norm) * x_next 
     return alpha
@@ -160,16 +155,17 @@ if __name__ == '__main__':
     omega=0.4
     presmoothing_steps = postsmoothing_steps = 3 * 1 
     w_cycles=2
-    stab = True 
+    stab = False 
+    deg_velocity = 2
 
     N = 4 * 8 * 1
     mesh_coarse = df.RectangleMesh(df.Point(-4,-1), df.Point(4,1), 4*N, N, 'left')
-    V_u_coarse = df.FunctionSpace(mesh_coarse, 'P', 2)
+    V_u_coarse = df.FunctionSpace(mesh_coarse, 'P', deg_velocity)
     V_p_coarse = df.FunctionSpace(mesh_coarse, 'P', 1)
     W_coarse = [V_u_coarse, V_u_coarse, V_p_coarse]
 
     mesh_fine = df.refine(mesh_coarse)
-    V_u_fine = df.FunctionSpace(mesh_fine, 'P', 2)
+    V_u_fine = df.FunctionSpace(mesh_fine, 'P', deg_velocity)
     V_p_fine = df.FunctionSpace(mesh_fine, 'P', 1)
     W_fine = [V_u_fine, V_u_fine, V_p_fine]
 
@@ -226,13 +222,11 @@ if __name__ == '__main__':
 
     A_hat_inv = create_A_hat_inv(A_fine)
     S_hat_inv = create_S_hat_inv(W_fine[-1], 1.)
-    omega_inv = estimate_omega(A_hat_inv, S_hat_inv, A_fine)
-    S_hat_inv = create_S_hat_inv(W_fine[-1], 1./omega_inv)
+    omega = estimate_omega(A_hat_inv, S_hat_inv, A_fine)
+    S_hat_inv = create_S_hat_inv(W_fine[-1], omega)
 
     smoother_lower = SmootherLower(A_fine, A_hat_inv, S_hat_inv)
     smoother_upper = SmootherUpper(A_fine, A_hat_inv, S_hat_inv)
-
-
 
     x = Ainv_fine.create_vec()
 
