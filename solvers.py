@@ -82,6 +82,7 @@ class MGSolver:
         self.num_w_cycles = 2
         self.projection_nullspace = lambda x: 1 
         self.show = 1
+        self.rtol = 1e-12
     
     def solve(self, b, x=None):
         # provide initial guess
@@ -91,7 +92,7 @@ class MGSolver:
             x = x.copy()
         # calculate initial residual
         r = b - self.A[0] * x
-        res_prev = r.norm()
+        res_start = res_prev = r.norm()
         # iterate mg solver
         for j in range(self.num_iterations):
             x = self._solve(x, b, 0)
@@ -101,6 +102,8 @@ class MGSolver:
             res = r.norm()
             if self.show > 0:
                 print(f'{j} - rate = {res / res_prev} ({res})')
+            if res < res_start * self.rtol:
+                return x
             res_prev = res
         return x
     
