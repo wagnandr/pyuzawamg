@@ -16,65 +16,51 @@ from solvers import (
 
 def assemble_system(W, bcs, stab=False, f=None):
     if f is None:
-        f = [df.Constant(0), df.Constant(0)]
+        f = df.Constant((0,0))
 
+    u, p = map(df.TrialFunction, W)
+    v, q = map(df.TestFunction, W)
 
-    ux, uy, p = map(df.TrialFunction, W)
-    vx, vy, q = map(df.TestFunction, W)
-
-    a = [[0,0,0],[0,0,0],[0,0,0]]
-    a[0][0] = df.inner(df.grad(ux), df.grad(vx))*df.dx
-    a[1][1] = df.inner(df.grad(uy), df.grad(vy))*df.dx
-    a[0][2] = -vx.dx(0) * p * df.dx
-    a[1][2] = -vy.dx(1) * p * df.dx
-    a[2][0] = -ux.dx(0) * q * df.dx
-    a[2][1] = -uy.dx(1) * q * df.dx
-
+    a = [[0,0],[0,0]]
+    a[0][0] = df.inner(df.grad(u), df.grad(v))*df.dx
+    a[0][1] = -df.div(v) * p * df.dx
+    a[1][0] = -df.div(u) * q * df.dx
 
     if stab:
         h = df.CellDiameter(W[0].mesh())
         beta  = 0.2
         delta = beta*h*h
-        a[2][2] = - delta*df.inner(df.grad(q), df.grad(p))*df.dx
+        a[1][1] = - delta*df.inner(df.grad(q), df.grad(p))*df.dx
 
-    L = [0,0,0]
-    L[0] = df.inner(f[0], vx) * df.dx
-    L[1] = df.inner(f[0], vy) * df.dx
-
+    L = [0,0]
+    L[0] = df.inner(f, v) * df.dx
     if stab:
-        L[2] = sum([-delta*df.inner(q.dx(0), f[0]) * df.dx for i in range(2)])
+        L[1] = -delta*df.inner(df.grad(q), f) * df.dx
 
     A, _, b = block_assemble(a, L, bcs, symmetric=True)
 
     return A, b
 
 
-def stokes_diagonal_preconditioner(A, W, omega=1):
-    ux, uy, p = map(df.TrialFunction, W)
-    vx, vy, q = map(df.TestFunction, W)
+def stokes_diagonal_preconditioner(A, W):
+    u, p = map(df.TrialFunction, W)
+    v, q = map(df.TestFunction, W)
 
     M = df.assemble(df.inner(p,q)*df.dx)
-    Minv = omega*LumpedInvDiag(M)
-    Pinv = block_mat([
-        [LU(A[0][0]), 0, 0], 
-        [0, LU(A[1][1]), 0], 
-        [0, 0, Minv]
-    ])
+    Minv = LumpedInvDiag(M)
+    Pinv = block_mat([[LU(A[0][0]), 0], [0, Minv]])
 
     return Pinv
 
 
 def diagonal_preconditioned_minres(A, W):
     Pinv = stokes_diagonal_preconditioner(A, W) 
-    Ainv = MinRes(A, precond=Pinv, show=0, tolerance=1e-16)
+    Ainv = MinRes(A, precond=Pinv, show=0,tolerance=1e-15)
     return Ainv
 
 
 def create_A_hat_inv(A):
-    return block_mat([
-        [LU(A[0,0]), 0],
-        [0, LU(A[1,1])],
-    ])
+    return block_mat(1, 1, [[LU(A[0,0])]])
 
 
 def create_S_hat_inv(V, omega):
@@ -102,33 +88,27 @@ def run_demo():
     mesh_coarse = df.RectangleMesh(df.Point(-4,-1), df.Point(4,1), 4*N, N, 'left')
 
     meshes = create_mesh_hierarchy(mesh_coarse, num_levels)
-    V_u = list(map(lambda m: df.FunctionSpace(m, 'P', deg_velocity), meshes))
+    V_u = list(map(lambda m: df.VectorFunctionSpace(m, 'P', deg_velocity), meshes))
     V_p = list(map(lambda m: df.FunctionSpace(m, 'P', 1), meshes))
-    W = list(zip(V_u, V_u, V_p))
+    W = list(zip(V_u, V_p))
 
     noslip_domain = df.CompiledSubDomain('x[1] >= 1-1e-8 || x[1] <= -1+1e-8')
     inflow_domain = df.CompiledSubDomain('x[0] <= -4+1e-8')
 
-    noslip_value = [df.Constant(0) for _ in range(num_levels)]
-    inflow_valuex = [df.Expression('-(x[1]+1)*(x[1]-1)', degree=2)] + [df.Constant(0) for _ in range(1,num_levels)]
-    inflow_valuey = [df.Constant(0) for _ in range(num_levels)] 
+    noslip_value = [df.Constant((0, 0)) for _ in range(num_levels)]
+    #inflow_value = [df.Constant((0, 0)) for _ in range(num_levels)]
+    inflow_value = [df.Expression(('-(x[1]+1)*(x[1]-1)', 0), degree=2)] + [df.Constant((0,0)) for _ in range(1,num_levels)]
 
-    bc0x = list(map(lambda args: df.DirichletBC(args[0], args[1], noslip_domain), list(zip(V_u,noslip_value))))
-    bc0y = list(map(lambda args: df.DirichletBC(args[0], args[1], noslip_domain), list(zip(V_u,noslip_value))))
-
-    bc1x = list(map(lambda args: df.DirichletBC(args[0], args[1], inflow_domain), list(zip(V_u,inflow_valuex))))
-    bc1y = list(map(lambda args: df.DirichletBC(args[0], args[1], inflow_domain), list(zip(V_u,inflow_valuey))))
-
+    bc0 = list(map(lambda args: df.DirichletBC(args[0], args[1], noslip_domain), list(zip(V_u, noslip_value))))
+    bc1 = list(map(lambda args: df.DirichletBC(args[0], args[1], inflow_domain), list(zip(V_u, inflow_value))))
     bcp = [[] for _ in range(num_levels)]
 
-    bcs = list(zip(list(zip(bc0x, bc1x)), list(zip(bc0y, bc1y)), bcp))
+    bcs = list(zip(list(zip(bc0, bc1)), bcp))
 
     solution = df.Function(V_u[0])
-    solution.interpolate(inflow_valuex[0])
+    solution.interpolate(inflow_value[0])
 
     P = create_prolongation_hierarchy(W) 
-    print(len(W))
-    print(len(P))
 
     assembly_results = [assemble_system(W_, bc, stab=stab) for W_, bc in zip(W, bcs)]
     A = [A for A, b in assembly_results]
@@ -162,18 +142,14 @@ def run_demo():
 
     x = solver.solve(b[0], x)
 
-    ux = df.Function(V_u[0], name='vx')
-    uy = df.Function(V_u[0], name='vy')
-    ux.vector()[:] = x[0][:]
-    uy.vector()[:] = x[1][:]
+    u = df.Function(V_u[0], name='v')
+    u.vector()[:] = x[0][:]
 
     p = df.Function(V_p[0], name='pressure')
-    p.vector()[:] = x[2][:]
+    p.vector()[:] = x[1][:]
 
-    file_ux = df.File('output/stokes_ux.pvd')
-    file_uy = df.File('output/stokes_uy.pvd')
-    file_ux << ux, 0
-    file_uy << uy, 0
+    file_u = df.File('output/stokes_u.pvd')
+    file_u << u, 0
     file_p = df.File('output/stokes_p.pvd')
     file_p << p, 0
 

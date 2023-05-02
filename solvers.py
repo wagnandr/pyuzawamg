@@ -48,8 +48,8 @@ def estimate_omega(A_hat_inv, S_hat_inv, A, num_iterations=10):
     # extract the operator
     S_hat_inv = block_mat(1, 1, [[S_hat_inv]])
     C = block_mat(1, 1, [[-A[n-1,n-1]]])
-    BT = block_mat(A[0:n-1,n-1:n])
-    B = block_mat(A[n-1:n,0:n-1])
+    BT = block_mat(n-1, 1, A[0:n-1,n-1:n])
+    B = block_mat(1, n-1, A[n-1:n,0:n-1])
     # apply our problem
     def op(x):
         y = (B * A_hat_inv * BT * x)
