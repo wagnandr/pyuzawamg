@@ -1,7 +1,7 @@
 import argparse
 import dolfin as df
 from block import block_assemble, block_mat
-from block.iterative import MinRes
+from block.iterative import MinRes, ConjGrad
 from block.algebraic.petsc import LU, LumpedInvDiag
 
 from solvers import (
@@ -63,10 +63,25 @@ def create_A_hat_inv(A):
     return block_mat(1, 1, [[LU(A[0,0])]])
 
 
-def create_S_hat_inv(V, omega):
+def create_S_hat_inv_mass(V, A, omega):
     u,v = df.TrialFunction(V), df.TestFunction(V)
     M = df.assemble(u*v*df.dx)
     S_hat_inv = 1/omega*LumpedInvDiag(M)
+    return S_hat_inv
+
+
+def create_S_hat_inv_exact(V, A, omega):
+    C = -A[1,1]
+    BT = A[0,1]
+    B = A[1,0]
+    iA0 = LU(A[0,0])
+
+    S = C + B * iA0 * BT
+    S_prec = create_S_hat_inv_mass(V, A, omega=1.) 
+    iS = ConjGrad(S, precond=S_prec, show=1, tolerance=1e-16)
+
+    S_hat_inv = (1./omega) * iS
+
     return S_hat_inv
 
 
@@ -82,6 +97,7 @@ def run_demo():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('--smoothing-steps', type=int, default=3)
     parser.add_argument('--w-cycles', type=int, default=2)
+    parser.add_argument('--exact-schur-complement', action='store_true')
     parser.add_argument('--stabilization', action='store_true')
     parser.add_argument('--degree-velocity', type=int, default=2)
     parser.add_argument('--num-levels', type=int, default=6)
@@ -137,10 +153,14 @@ def run_demo():
     # create approximation of A
     A_hat_inv = [create_A_hat_inv(A_) for A_ in A]
     # estimate omega for Uzawa Smoother
-    S_hat_inv = create_S_hat_inv(W[0][-1], omega=1.)
+    if args.exact_schur_complement:
+        factory_S_hat = create_S_hat_inv_exact
+    else:
+        factory_S_hat = create_S_hat_inv_mass
+    S_hat_inv = factory_S_hat(W[0][-1], A[0], omega=1.)
     omega = estimate_omega(A_hat_inv[0], S_hat_inv, A[0])
     # create approximation of S 
-    S_hat_inv = [create_S_hat_inv(W_[-1], omega) for W_ in W]
+    S_hat_inv = [factory_S_hat(W_[-1], A_, omega=omega) for W_, A_ in zip(W,A)]
 
     # create smoothers 
     presmoother = [SmootherLower(A_, A_hat_inv_, S_hat_inv_) for A_, A_hat_inv_, S_hat_inv_ in zip(A, A_hat_inv, S_hat_inv)]
