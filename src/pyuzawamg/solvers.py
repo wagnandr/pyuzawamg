@@ -1,7 +1,7 @@
 import dolfin as df 
 from block import block_vec, block_mat
 
-from prolongation import block_prolongation
+from .prolongation import block_prolongation
 
 
 class SmootherLower:

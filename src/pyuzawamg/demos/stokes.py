@@ -4,7 +4,7 @@ from block import block_assemble, block_mat
 from block.iterative import MinRes, ConjGrad
 from block.algebraic.petsc import LU, LumpedInvDiag
 
-from solvers import (
+from ..solvers import (
     SmootherLower, 
     SmootherUpper, 
     MGSolver, 

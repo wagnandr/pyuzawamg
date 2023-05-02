@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pyuzawamg"
+version = "0.0.1"
+authors = [
+  { name="Andreas Wagner", email="wagnandr@in.tum.de" },
+]
+description = "A small example package for constructing an uzawa smoother"
+readme = "README.md"
+requires-python = ">=3.11"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/wagnandr/pyuzawamg"
+"Bug Tracker" = "https://github.com/wagnandr/pyuzawamg/issues"
