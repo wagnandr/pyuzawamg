@@ -4,8 +4,6 @@ from block import block_vec, block_mat
 from prolongation import block_prolongation
 
 
-
-
 class SmootherLower:
     def __init__(self, A,  A_hat_inv, S_hat_inv):
         self.A = A

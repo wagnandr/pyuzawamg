@@ -1,6 +1,6 @@
+import argparse
 import dolfin as df
-import numpy as np
-from block import block_assemble, block_mat, block_vec
+from block import block_assemble, block_mat
 from block.iterative import MinRes
 from block.algebraic.petsc import LU, LumpedInvDiag
 
@@ -78,53 +78,75 @@ def zero_mean(mesh, p):
 
 
 def run_demo():
-    presmoothing_steps = postsmoothing_steps = 3 * 1 
-    w_cycles=2
-    stab = True 
-    deg_velocity = 1
-    num_levels = 6
+    # problem properties
+    parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument('--smoothing-steps', type=int, default=3)
+    parser.add_argument('--w-cycles', type=int, default=2)
+    parser.add_argument('--stabilization', action='store_true')
+    parser.add_argument('--degree-velocity', type=int, default=2)
+    parser.add_argument('--num-levels', type=int, default=6)
+    args = parser.parse_args()
 
+    presmoothing_steps = postsmoothing_steps = args.smoothing_steps
+    w_cycles= args.w_cycles
+    stab = args.stabilization 
+    deg_velocity = args.degree_velocity 
+    num_levels = args.num_levels 
+
+    # create the coarse mesh:
     N = 2
     mesh_coarse = df.RectangleMesh(df.Point(-4,-1), df.Point(4,1), 4*N, N, 'left')
 
+    # setup a mesh hierarchy
     meshes = create_mesh_hierarchy(mesh_coarse, num_levels)
+    # create spaces
     V_u = list(map(lambda m: df.VectorFunctionSpace(m, 'P', deg_velocity), meshes))
     V_p = list(map(lambda m: df.FunctionSpace(m, 'P', 1), meshes))
     W = list(zip(V_u, V_p))
 
+    # inlets 
     noslip_domain = df.CompiledSubDomain('x[1] >= 1-1e-8 || x[1] <= -1+1e-8')
     inflow_domain = df.CompiledSubDomain('x[0] <= -4+1e-8')
 
+    # boundary values
     noslip_value = [df.Constant((0, 0)) for _ in range(num_levels)]
-    #inflow_value = [df.Constant((0, 0)) for _ in range(num_levels)]
     inflow_value = [df.Expression(('-(x[1]+1)*(x[1]-1)', 0), degree=2)] + [df.Constant((0,0)) for _ in range(1,num_levels)]
 
-    bc0 = list(map(lambda args: df.DirichletBC(args[0], args[1], noslip_domain), list(zip(V_u, noslip_value))))
-    bc1 = list(map(lambda args: df.DirichletBC(args[0], args[1], inflow_domain), list(zip(V_u, inflow_value))))
-    bcp = [[] for _ in range(num_levels)]
+    # boundary conditions:
+    bc_vel_noslip = list(map(lambda args: df.DirichletBC(args[0], args[1], noslip_domain), list(zip(V_u, noslip_value))))
+    bc_vel_inflow = list(map(lambda args: df.DirichletBC(args[0], args[1], inflow_domain), list(zip(V_u, inflow_value))))
+    bc_pre = [[] for _ in range(num_levels)]
 
-    bcs = list(zip(list(zip(bc0, bc1)), bcp))
+    bcs = list(zip(list(zip(bc_vel_noslip, bc_vel_inflow)), bc_pre))
 
+    # true solution
     solution = df.Function(V_u[0])
     solution.interpolate(inflow_value[0])
 
+    # prolongation operators
     P = create_prolongation_hierarchy(W) 
 
+    # assembled systems
     assembly_results = [assemble_system(W_, bc, stab=stab) for W_, bc in zip(W, bcs)]
     A = [A for A, b in assembly_results]
     b = [b for A, b in assembly_results]
 
+    # coarse grid solver
     Ainv_coarse = diagonal_preconditioned_minres(A[-1], W[-1])
 
+    # create approximation of A
     A_hat_inv = [create_A_hat_inv(A_) for A_ in A]
-    S_hat_inv = create_S_hat_inv(W[0][-1], 1.)
+    # estimate omega for Uzawa Smoother
+    S_hat_inv = create_S_hat_inv(W[0][-1], omega=1.)
     omega = estimate_omega(A_hat_inv[0], S_hat_inv, A[0])
-    omega *= 1.
+    # create approximation of S 
     S_hat_inv = [create_S_hat_inv(W_[-1], omega) for W_ in W]
 
+    # create smoothers 
     presmoother = [SmootherLower(A_, A_hat_inv_, S_hat_inv_) for A_, A_hat_inv_, S_hat_inv_ in zip(A, A_hat_inv, S_hat_inv)]
     postsmoother = [SmootherUpper(A_, A_hat_inv_, S_hat_inv_) for A_, A_hat_inv_, S_hat_inv_ in zip(A, A_hat_inv, S_hat_inv)]
 
+    # setup full solver
     solver = MGSolver(
         presmoother=presmoother,
         postsmoother=postsmoother,
@@ -142,12 +164,13 @@ def run_demo():
 
     x = solver.solve(b[0], x)
 
+    # write vectorial solution into functions
     u = df.Function(V_u[0], name='v')
     u.vector()[:] = x[0][:]
-
     p = df.Function(V_p[0], name='pressure')
     p.vector()[:] = x[1][:]
 
+    # output to files
     file_u = df.File('output/stokes_u.pvd')
     file_u << u, 0
     file_p = df.File('output/stokes_p.pvd')
