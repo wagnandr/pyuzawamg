@@ -7,6 +7,7 @@ from block.algebraic.petsc import LU, LumpedInvDiag
 from ..solvers import (
     SmootherLower, 
     SmootherUpper, 
+    SmootherSymmetric,
     MGSolver, 
     create_mesh_hierarchy,
     create_prolongation_hierarchy,
@@ -101,6 +102,7 @@ def run_demo():
     parser.add_argument('--stabilization', action='store_true')
     parser.add_argument('--degree-velocity', type=int, default=2)
     parser.add_argument('--num-levels', type=int, default=6)
+    parser.add_argument('--smoother-type', type=str, choices=('rectangular', 'symmetric'), default='rectangular')
     args = parser.parse_args()
 
     presmoothing_steps = postsmoothing_steps = args.smoothing_steps
@@ -163,8 +165,15 @@ def run_demo():
     S_hat_inv = [factory_S_hat(W_[-1], A_, omega=omega) for W_, A_ in zip(W,A)]
 
     # create smoothers 
-    presmoother = [SmootherLower(A_, A_hat_inv_, S_hat_inv_) for A_, A_hat_inv_, S_hat_inv_ in zip(A, A_hat_inv, S_hat_inv)]
-    postsmoother = [SmootherUpper(A_, A_hat_inv_, S_hat_inv_) for A_, A_hat_inv_, S_hat_inv_ in zip(A, A_hat_inv, S_hat_inv)]
+    if args.smoother_type == 'symmetric':
+        presmoother = [SmootherSymmetric(A_, A_hat_inv_, A_hat_inv_, S_hat_inv_) for A_, A_hat_inv_, S_hat_inv_ in zip(A, A_hat_inv, S_hat_inv)]
+        postsmoother = [SmootherSymmetric(A_, A_hat_inv_, A_hat_inv_, S_hat_inv_) for A_, A_hat_inv_, S_hat_inv_ in zip(A, A_hat_inv, S_hat_inv)]
+    elif args.smoother_type == 'rectangular':
+        presmoother = [SmootherLower(A_, A_hat_inv_, S_hat_inv_) for A_, A_hat_inv_, S_hat_inv_ in zip(A, A_hat_inv, S_hat_inv)]
+        postsmoother = [SmootherUpper(A_, A_hat_inv_, S_hat_inv_) for A_, A_hat_inv_, S_hat_inv_ in zip(A, A_hat_inv, S_hat_inv)]
+    else:
+        print('unknown smoother')
+        exit(-1)
 
     # setup full solver
     solver = MGSolver(

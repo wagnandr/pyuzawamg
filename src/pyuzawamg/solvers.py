@@ -4,56 +4,78 @@ from block import block_vec, block_mat
 from .prolongation import block_prolongation
 
 
-class SmootherLower:
-    def __init__(self, A,  A_hat_inv, S_hat_inv):
+class SmootherSymmetric:
+    def __init__(self, A,  pAinv, pATinv, pSinv):
         self.A = A
-        self.A_hat_inv = A_hat_inv
-        self.S_hat_inv = S_hat_inv
+        self.pAinv = pAinv
+        self.pATinv = pATinv
+        self.pSinv = pSinv
     
     def mult(self, b, x):
-        A, A_hat_inv, S_hat_inv = self.A, self.A_hat_inv, self.S_hat_inv
+        A, pAinv, pATinv, pSinv = self.A, self.pAinv, self.pATinv, self.pSinv
         n,m = A.blocks.shape
         assert n == m, "only symmetric matrices supported"
         # first row:
         r0 = block_vec(b[0:n-1] - A[0:n-1,0:n-1] @ x[0:n-1] - A[0:n-1,n-1:n] @ x[n-1:n])
-        x[0:n-1] = x[0:n-1] + (A_hat_inv * r0).blocks
+        x[0:n-1] = x[0:n-1] + (pAinv * r0).blocks
         # second row:
         r1 = b[n-1] - A[n-1,0:n-1] @ x[0:n-1] - A[n-1,n-1] * x[n-1]
-        x[n-1] = x[n-1] - S_hat_inv * r1
+        x[n-1] = x[n-1] - pSinv * r1
+        # first row (again):
+        r0 = block_vec(b[0:n-1] - A[0:n-1,0:n-1] @ x[0:n-1] - A[0:n-1,n-1:n] @ x[n-1:n])
+        x[0:n-1] = x[0:n-1] + (pATinv * r0).blocks
+
+
+class SmootherLower:
+    def __init__(self, A,  pAinv, pSinv):
+        self.A = A
+        self.pAinv = pAinv
+        self.pSinv = pSinv
+    
+    def mult(self, b, x):
+        A, pAinv, pSinv = self.A, self.pAinv, self.pSinv
+        n,m = A.blocks.shape
+        assert n == m, "only symmetric matrices supported"
+        # first row:
+        r0 = block_vec(b[0:n-1] - A[0:n-1,0:n-1] @ x[0:n-1] - A[0:n-1,n-1:n] @ x[n-1:n])
+        x[0:n-1] = x[0:n-1] + (pAinv * r0).blocks
+        # second row:
+        r1 = b[n-1] - A[n-1,0:n-1] @ x[0:n-1] - A[n-1,n-1] * x[n-1]
+        x[n-1] = x[n-1] - pSinv * r1
 
 
 class SmootherUpper:
-    def __init__(self, A,  A_hat_inv, S_hat_inv):
+    def __init__(self, A,  pAinv, pSinv):
         self.A = A
-        self.A_hat_inv = A_hat_inv
-        self.S_hat_inv = S_hat_inv
+        self.pAinv = pAinv
+        self.pSinv = pSinv
     
     def mult(self, b, x):
-        A, A_hat_inv, S_hat_inv = self.A, self.A_hat_inv, self.S_hat_inv
+        A, pAinv, pSinv = self.A, self.pAinv, self.pSinv
         n,m = A.blocks.shape
         assert n == m, "only symmetric matrices supported"
         # second row:
         r1 = b[n-1] - A[n-1,0:n-1] @ x[0:n-1] - A[n-1,n-1] * x[n-1]
-        x[n-1] = x[n-1] - S_hat_inv * r1
+        x[n-1] = x[n-1] - pSinv * r1
         # first row:
         r0 = block_vec(b[0:n-1] - A[0:n-1,0:n-1] @ x[0:n-1] - A[0:n-1,n-1:n] @ x[n-1:n])
-        x[0:n-1] = x[0:n-1] + (A_hat_inv * r0).blocks
+        x[0:n-1] = x[0:n-1] + (pAinv * r0).blocks
 
 
-def estimate_omega(A_hat_inv, S_hat_inv, A, num_iterations=10):
+def estimate_omega(pAinv, pSinv, A, num_iterations=10):
     n,m = A.blocks.shape
     assert n == m, "only symmetric matrices supported"
     # extract the operator
-    S_hat_inv = block_mat(1, 1, [[S_hat_inv]])
+    pSinv = block_mat(1, 1, [[pSinv]])
     C = block_mat(1, 1, [[-A[n-1,n-1]]])
     BT = block_mat(n-1, 1, A[0:n-1,n-1:n])
     B = block_mat(1, n-1, A[n-1:n,0:n-1])
     # apply our problem
     def op(x):
-        y = (B * A_hat_inv * BT * x)
+        y = (B * pAinv * BT * x)
         if not C[0,0] == 0:
             y += C * x
-        return S_hat_inv * y
+        return pSinv * y
     # We create a block vector for our power iteration. 
     # Note that 
     #   x = C.create_vec()
