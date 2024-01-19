@@ -106,7 +106,7 @@ class MGSolver:
         self.show = 1
         self.rtol = 1e-12
     
-    def solve(self, b, x=None):
+    def solve(self, b, x=None, residual_rate_list=[]):
         # provide initial guess
         if x is None:
             x = self.A[0].create_vec()
@@ -115,6 +115,7 @@ class MGSolver:
         # calculate initial residual
         r = b - self.A[0] * x
         res_start = res_prev = r.norm()
+        print(f'{-1} - rate = - ({res_start})')
         # iterate mg solver
         for j in range(self.num_iterations):
             x = self._solve(x, b, 0)
@@ -122,8 +123,10 @@ class MGSolver:
             r = b - self.A[0] * x
             self.projection_nullspace(r)
             res = r.norm()
+            res_rate = res / res_prev
             if self.show > 0:
-                print(f'{j} - rate = {res / res_prev} ({res})')
+                print(f'{j} - rate = {res_rate} ({res})')
+            residual_rate_list.append(res_rate)
             if res < res_start * self.rtol:
                 return x
             res_prev = res
@@ -144,9 +147,11 @@ class MGSolver:
         presmoother = self.presmoother[k]
         postsmoother = self.postsmoother[k]
         P = self.P[k]
+        # print(f'{k}, pre-before, {(b_fine - A_fine * x).norm()}')
         # presmoothing steps
         for _ in range(self.num_presmoothing_steps):
             presmoother.mult(b_fine, x)
+        # print(f'{k}, pre-after, {(b_fine - A_fine * x).norm()}')
         # coarse grid correction
         for _ in range(self.num_w_cycles):
             r_fine = b_fine - A_fine * x
@@ -157,9 +162,11 @@ class MGSolver:
             d_fine = A_fine.create_vec()
             P.mult(d_coarse, d_fine) 
             x += d_fine
+        # print(f'{k}, coarse-after, {(b_fine - A_fine * x).norm()}')
         # postmoothing steps
         for _ in range(self.num_postsmoothing_steps):
             postsmoother.mult(b_fine, x)
+        # print(f'{k}, post-after, {(b_fine - A_fine * x).norm()}')
         return x
 
 
@@ -175,6 +182,10 @@ def create_prolongation_hierarchy(W):
     for k in range(len(W)-1):
         W_fine = W[k]
         W_coarse = W[k+1]
+        if W_fine.num_sub_spaces() == 0:
+            W_fine = [W_fine]
+        if W_coarse.num_sub_spaces() == 0:
+            W_coarse = [W_coarse]
         P = block_prolongation(W_coarse, W_fine)
         prolongations.append(P)
     return prolongations
