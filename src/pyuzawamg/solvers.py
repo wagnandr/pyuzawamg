@@ -182,10 +182,6 @@ def create_prolongation_hierarchy(W):
     for k in range(len(W)-1):
         W_fine = W[k]
         W_coarse = W[k+1]
-        if W_fine.num_sub_spaces() == 0:
-            W_fine = [W_fine]
-        if W_coarse.num_sub_spaces() == 0:
-            W_coarse = [W_coarse]
         P = block_prolongation(W_coarse, W_fine)
         prolongations.append(P)
     return prolongations
