@@ -54,14 +54,52 @@ class prolongation_operator:
         return prolongation_operator(coarse, fine, mat, False)
 
 
+'''
 class block_prolongation:
     def __init__(self, W_coarse, W_fine) -> None:
+        self._W_fine = W_fine
+        self._W_coarse = W_coarse
         self.blocks = [prolongation_operator.create(c, f) for (c,f) in zip(W_coarse, W_fine)]
     
     def mult(self, src, dst):
+        src = src.copy()
         for idx in range(len(self.blocks)):
             dst[idx] = self.blocks[idx].matvec(src[idx])
 
     def tmult(self, src, dst):
+        src = src.copy()
         for idx in range(len(self.blocks)):
             dst[idx] = self.blocks[idx].transpmult(src[idx])
+'''
+
+domain = df.CompiledSubDomain('on_boundary')
+
+class block_prolongation:
+    def __init__(self, W_coarse, W_fine) -> None:
+        self._W_fine = W_fine
+        self._W_coarse = W_coarse
+        self.blocks = [prolongation_operator.create(c, f) for (c,f) in zip(W_coarse, W_fine)]
+        self.post_mult = lambda x: x 
+        self.post_tmult = lambda x: x 
+    
+    def mult(self, src, dst):
+        #self.post_tmult(src)
+        src = src.copy()
+        df.DirichletBC(self._W_coarse[0], df.Constant((0,0)), domain).apply(src[0])
+        for idx in range(len(self.blocks)):
+            dst[idx] = self.blocks[idx].matvec(src[idx])
+        #self.post_mult(dst)
+        df.DirichletBC(self._W_fine[0], df.Constant((0,0)), domain).apply(dst[0])
+        d = df.as_backend_type(dst[1]).vec()
+        d[:] -= d.sum() / d.size
+
+    def tmult(self, src, dst):
+        src = src.copy()
+        df.DirichletBC(self._W_fine[0], df.Constant((0,0)), domain).apply(src[0])
+        #self.post_mult(src)
+        for idx in range(len(self.blocks)):
+            dst[idx] = self.blocks[idx].transpmult(src[idx])
+        df.DirichletBC(self._W_coarse[0], df.Constant((0,0)), domain).apply(dst[0])
+        #self.post_tmult(dst)
+        d = df.as_backend_type(dst[1]).vec()
+        d[:] -= d.sum() / d.size

@@ -88,6 +88,7 @@ def estimate_omega(pAinv, pSinv, A, num_iterations=10):
         alpha = x_next.inner(x)
         x_next_norm = x_next.norm()
         x = (1./x_next_norm) * x_next 
+        print('!', alpha)
     return alpha
 
 
@@ -125,7 +126,7 @@ class MGSolver:
             res = r.norm()
             res_rate = res / res_prev
             if self.show > 0:
-                print(f'{j} - rate = {res_rate} ({res})')
+                print(f'{j} - rate = {res_rate} (res_t = {res}, res[0] = {block_vec([r[0]]).norm()}, res[1] = {block_vec([r[1]]).norm()})')
             residual_rate_list.append(res_rate)
             if res < res_start * self.rtol:
                 return x
@@ -140,6 +141,7 @@ class MGSolver:
         x = x.copy()
         # solve on finest level
         if k + 1 == self.num_levels:
+            self.projection_nullspace_coarse(b_fine)
             return self.coarse_grid_solver * b_fine
         # extract local solver components:
         A_fine = self.A[k]
