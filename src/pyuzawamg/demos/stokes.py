@@ -2,7 +2,7 @@ import argparse
 import dolfin as df
 from block import block_assemble, block_mat
 from block.iterative import MinRes, ConjGrad
-from block.algebraic.petsc import LU, LumpedInvDiag
+from block.algebraic.petsc import LU, LumpedInvDiag, InvDiag
 
 from ..solvers import (
     SmootherLower, 
@@ -61,7 +61,8 @@ def diagonal_preconditioned_minres(A, W):
 
 
 def create_A_hat_inv(A):
-    return block_mat(1, 1, [[LU(A[0,0])]])
+    #return block_mat(1, 1, [[LU(A[0,0])]])
+    return block_mat(1, 1, [[0.5*InvDiag(A[0,0])]])
 
 
 def create_S_hat_inv_mass(V, A, omega):
@@ -187,6 +188,7 @@ def run_demo():
     solver.num_postsmoothing_steps = postsmoothing_steps
     solver.num_w_cycles = w_cycles
     solver.projection_nullspace = lambda x: zero_mean(meshes[0], x[-1])
+    solver.projection_nullspace_coarse = lambda x: x 
 
     x = A[0].create_vec()
     x.randomize()

@@ -24,7 +24,7 @@ from pyuzawamg.util import (
 
 def assemble_system(W, bcs, stab=False, f=None):
     if f is None:
-        f = df.Constant((0,0))
+        f = df.Constant((0,0,0))
 
     u, p = map(df.TrialFunction, W)
     v, q = map(df.TestFunction, W)
@@ -151,15 +151,18 @@ def create_gs_b(A, maxit):
     return Richardson(precond=block_mat([[SOR(A[0,0], parameters={"petsc_sor_backward": 1, "ksp_monitor": 1})], ]), A=block_mat([[A[0,0]]]), maxiter=maxit, tolerance=1e-16, show=0)
 
 def create_jacobi(A, maxit):
-    #return SGS(A, maxit)
+    #return Richardson(precond=block_mat([[SOR(A[0,0], parameters={"petsc_sor_forward": 1, "ksp_monitor": 1})], ]), A=block_mat([[A[0,0]]]), maxiter=maxit, tolerance=1e-16, show=0)
+    return SGS(A, maxit)
     #return block_mat([[SOR(A[0,0], parameters={"petsc_sor_symmetric": 1, "ksp_monitor": 1})], ])
-    #return block_mat([[SOR(A[0,0], parameters={"petsc_sor_forward": 1, "ksp_monitor": 1})], ])
+    return block_mat([[SOR(A[0,0], parameters={"petsc_sor_forward": 1, "ksp_monitor": 1})], ])
     #return block_mat([[LU(A[0,0])], ])
     #return block_mat([[0.25*InvDiag(A[0,0])], ])
     #return block_mat([[0.00001*InvDiag(A[0,0])], ])
     #return block_mat([[0.5*InvDiag(A[0,0])]])
     #return block_mat([[0.5*InvDiag(A[0,0])]])
-    return block_mat([[0.5*InvDiag(A[0,0])]])
+    #return block_mat([[0.5*InvDiag(A[0,0])]])
+    #return block_mat([[(1./2.2) * InvDiag(A[0,0])]])
+    #return block_mat([[(1./2) * InvDiag(A[0,0])]])
     #return Richardson(precond=block_mat([[0.1 * InvDiag(A[0,0])]]), A=block_mat([[A[0,0]]]), maxiter=maxit, tolerance=1e-16, show=1)
     #return block_mat([[0.5*Jacobi(A=A[0,0])]])
     #return block_mat([[Jacobi(A=A[0,0])]])
@@ -229,7 +232,8 @@ def run_demo():
 
     # create the coarse mesh:
     mesh_coarse = df.Mesh()
-    file = df.XDMFFile('AnnulusShell.xdmf')
+    #file = df.XDMFFile('AnnulusShell.xdmf')
+    file = df.XDMFFile('SphericalShell.xdmf')
     file.read(mesh_coarse)
 
     # setup a mesh hierarchy
@@ -247,10 +251,11 @@ def run_demo():
 
 
     # boundary values
-    noslip_value = [df.Constant((0, 0)) for _ in range(num_levels)]
+    noslip_value = [df.Constant((0, 0, 0)) for _ in range(num_levels)]
     inflow_value = [df.Expression((
          'x[1]+std::sin( 3*M_PI*x[1]) +std::sin( M_PI*( x[0]+x[1]) ) +std::cos( 8*M_PI*x[1])',
-         '-x[0]+std::sin( 4*M_PI*x[0]) -std::sin( M_PI*( x[0]+x[1]) ) +std::cos( 2*M_PI*x[0])'), degree=2)] + [df.Constant((0,0)) for _ in range(1,num_levels)]
+         '-x[0]+std::sin( 4*M_PI*x[0]) -std::sin( M_PI*( x[0]+x[1]) ) +std::cos( 2*M_PI*x[0])',
+         '0'), degree=2)] + [df.Constant((0,0,0)) for _ in range(1,num_levels)]
 
     # boundary conditions:
     bc_vel_noslip = list(map(lambda args: df.DirichletBC(args[0], args[1], noslip_domain), list(zip(V_u, noslip_value))))
@@ -276,7 +281,9 @@ def run_demo():
             16*std::pow( M_PI, 2) *std::sin( 4*M_PI*x[0]) -
             2*std::pow( M_PI, 2) *std::sin( M_PI*( x[0]+x[1]) ) +
             4*std::pow( M_PI, 2) *std::cos( 2*M_PI*x[0]) -1
-        '''), degree=2)
+        ''',
+        '0'
+        ), degree=2)
 
     # assembled systems
     assembly_results = [assemble_system(W[0], bcs[0], stab=stab, f=f)] + [assemble_system(W_, bc, stab=stab) for idx, (W_, bc) in enumerate(zip(W, bcs)) if idx != 0]
@@ -290,6 +297,7 @@ def run_demo():
     for _ in range(100):
         #x_next = SGS(A[0],maxit=1) * block_mat([[A[0][0,0]]]) * x
         x_next = create_gs_f(A[0], maxit=1) * block_mat([[A[0][0,0]]]) * x
+        x_next = create_jacobi(A[0], maxit=1) * block_mat([[A[0][0,0]]]) * x
         # rayleigh quotient
         alpha = x_next.inner(x)
         x_next_norm = x_next.norm()
@@ -302,9 +310,9 @@ def run_demo():
 
     # create approximation of A
     #A_hat_inv = [create_gs_b(A_, maxit_gs) for A_ in A]
-    #A_hat_inv = [create_sgs(A_, maxit_gs) for A_ in A]
+    A_hat_inv = [create_sgs(A_, maxit_gs) for A_ in A]
     #A_hat_inv = [create_jacobi(A_, maxit_gs) for A_ in A]
-    A_hat_inv = [block_mat([[LU(A_[0,0])]]) for A_ in A]
+    #A_hat_inv = [block_mat([[LU(A_[0,0])]]) for A_ in A]
     # estimate omega for Uzawa Smoother
     if args.exact_schur_complement:
         factory_S_hat = create_S_hat_inv_exact
@@ -313,8 +321,10 @@ def run_demo():
     S_hat_inv = factory_S_hat(W[0][-1], A[0], omega=1.)
     #omega = estimate_omega(A_hat_inv[0], S_hat_inv, A[0])
     omega = 1. 
+    #omega = 1. 
     #omega = 1./0.3
     #omega = 0.2
+    #omega = 1/0.4
     print(f'omega {omega}')
     # create approximation of S 
     S_hat_inv = [factory_S_hat(W_[-1], A_, omega=omega) for W_, A_ in zip(W,A)]
@@ -354,7 +364,7 @@ def run_demo():
 
     x = A[0].create_vec()
     x.randomize()
-    df.DirichletBC(V_u[0], df.Constant((0,0)), inflow_domain).apply(x[0])
+    df.DirichletBC(V_u[0], df.Constant((0,0,0)), inflow_domain).apply(x[0])
     df.DirichletBC(V_u[0], inflow_value[0], inflow_domain).apply(x[0])
     print(x[0][:])
 

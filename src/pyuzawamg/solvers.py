@@ -104,6 +104,7 @@ class MGSolver:
         self.num_postsmoothing_steps = 3 
         self.num_w_cycles = 2
         self.projection_nullspace = lambda x: 1 
+        self.projection_nullspace_coarse = lambda x: 1 
         self.show = 1
         self.rtol = 1e-12
     
