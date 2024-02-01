@@ -1,5 +1,6 @@
 import dolfin as df 
 from block import block_vec, block_mat
+from block.iterative import iterative 
 
 from .prolongation import block_prolongation
 
@@ -91,6 +92,91 @@ def estimate_omega(pAinv, pSinv, A, num_iterations=10):
     return alpha
 
 
+def mgsolve(
+    A_list,
+    P_list,
+    presmoothers,
+    postsmoothers,
+    coarse_grid_solver,
+    b,
+    x,
+    num_iterations,
+    num_presmoothing_steps,
+    num_postsmoothing_steps,
+    num_w_cycles,
+    projection_nullspace,
+    show,
+    rtol
+):
+    num_levels = len(A_list)
+
+    def recursive_solve(x, b_fine, k):
+        x = x.copy()
+        # solve on finest level
+        if k + 1 == num_levels:
+            return coarse_grid_solver * b_fine
+        # extract local solver componennum_iterationets:
+        A_fine = A_list[k]
+        A_coarse = A_list[k+1]
+        presmoother = presmoothers[k]
+        postsmoother = postsmoothers[k]
+        P = P_list[k]
+        # print(f'{k}, pre-before, {(b_fine - A_fine * x).norm()}')
+        # presmoothing steps
+        for _ in range(num_presmoothing_steps):
+            presmoother.mult(b_fine, x)
+        # print(f'{k}, pre-after, {(b_fine - A_fine * x).norm()}')
+        # coarse grid correction
+        for _ in range(num_w_cycles):
+            r_fine = b_fine - A_fine * x
+            r_coarse = A_coarse.create_vec()
+            d_coarse = A_coarse.create_vec()
+            P.tmult(r_fine, r_coarse) 
+            d_coarse = recursive_solve(d_coarse, r_coarse, k+1)
+            d_fine = A_fine.create_vec()
+            P.mult(d_coarse, d_fine) 
+            x += d_fine
+        # print(f'{k}, coarse-after, {(b_fine - A_fine * x).norm()}')
+        # postmoothing steps
+        for _ in range(num_postsmoothing_steps):
+            postsmoother.mult(b_fine, x)
+        # print(f'{k}, post-after, {(b_fine - A_fine * x).norm()}')
+        return x
+    
+    residual_rate_list = []
+    residuals = []
+    
+    def outer_solve(b, x):
+        # provide initial guess
+        if x is None:
+            x = A_list[0].create_vec()
+        else:
+            x = x.copy()
+        # calculate initial residual
+        r = b - A_list[0] * x
+        res_start = res_prev = r.norm()
+        print(f'{-1} - rate = - ({res_start})')
+        residuals.append(res_start)
+        # iterate mg solver
+        for j in range(num_iterations):
+            x = recursive_solve(x, b, 0)
+            # calculate residual:
+            r = b - A_list[0] * x
+            projection_nullspace(r)
+            res = r.norm()
+            res_rate = res / res_prev
+            if show > 0:
+                print(f'{j} - rate = {res_rate} ({res})')
+            residuals.append(res)
+            residual_rate_list.append(res_rate)
+            if res < res_start * rtol:
+                return x
+            res_prev = res
+        return x
+    
+    return outer_solve(b, x), residuals, residual_rate_list
+
+
 class MGSolver:
     def __init__(self, presmoother, postsmoother, coarse_grid_solver, A, P) -> None:
         self.presmoother = presmoother 
@@ -106,68 +192,76 @@ class MGSolver:
         self.show = 1
         self.rtol = 1e-12
     
-    def solve(self, b, x=None, residual_rate_list=[]):
-        # provide initial guess
-        if x is None:
-            x = self.A[0].create_vec()
-        else:
-            x = x.copy()
-        # calculate initial residual
-        r = b - self.A[0] * x
-        res_start = res_prev = r.norm()
-        print(f'{-1} - rate = - ({res_start})')
-        # iterate mg solver
-        for j in range(self.num_iterations):
-            x = self._solve(x, b, 0)
-            # calculate residual:
-            r = b - self.A[0] * x
-            self.projection_nullspace(r)
-            res = r.norm()
-            res_rate = res / res_prev
-            if self.show > 0:
-                print(f'{j} - rate = {res_rate} ({res})')
-            residual_rate_list.append(res_rate)
-            if res < res_start * self.rtol:
-                return x
-            res_prev = res
-        return x
-    
-    @property
-    def num_levels(self):
-        return len(self.A)
+    def solve(self, b, x=None, residual_rate_list=[], residuals=[]):
+        mgsolve(
+            A_list=self.A,
+            P_list=self.P,
+            presmoothers=self.presmoother,
+            postsmoothers=self.postsmoother,
+            coarse_grid_solver=self.coarse_grid_solver,
+            b=b,
+            x=x,
+            num_iterations=self.num_iterations,
+            num_presmoothing_steps=self.num_presmoothing_steps,
+            num_postsmoothing_steps=self.num_postsmoothing_steps,
+            num_w_cycles=self.num_w_cycles,
+            projection_nullspace=self.projection_nullspace,
+            show=self.show,
+            rtol=self.rtol)
 
-    def _solve(self, x, b_fine, k):
-        x = x.copy()
-        # solve on finest level
-        if k + 1 == self.num_levels:
-            return self.coarse_grid_solver * b_fine
-        # extract local solver components:
-        A_fine = self.A[k]
-        A_coarse = self.A[k+1]
-        presmoother = self.presmoother[k]
-        postsmoother = self.postsmoother[k]
-        P = self.P[k]
-        # print(f'{k}, pre-before, {(b_fine - A_fine * x).norm()}')
-        # presmoothing steps
-        for _ in range(self.num_presmoothing_steps):
-            presmoother.mult(b_fine, x)
-        # print(f'{k}, pre-after, {(b_fine - A_fine * x).norm()}')
-        # coarse grid correction
-        for _ in range(self.num_w_cycles):
-            r_fine = b_fine - A_fine * x
-            r_coarse = A_coarse.create_vec()
-            d_coarse = A_coarse.create_vec()
-            P.tmult(r_fine, r_coarse) 
-            d_coarse = self._solve(d_coarse, r_coarse, k+1)
-            d_fine = A_fine.create_vec()
-            P.mult(d_coarse, d_fine) 
-            x += d_fine
-        # print(f'{k}, coarse-after, {(b_fine - A_fine * x).norm()}')
-        # postmoothing steps
-        for _ in range(self.num_postsmoothing_steps):
-            postsmoother.mult(b_fine, x)
-        # print(f'{k}, post-after, {(b_fine - A_fine * x).norm()}')
-        return x
+
+class MGSolverBlock(iterative):
+    def __init__(self, 
+                 presmoother, 
+                 postsmoother, 
+                 coarse_grid_solver, 
+                 A, 
+                 P, 
+                 tolerance=1e-5, 
+                 presmoothing_steps=3,
+                 postsmoothing_steps=3,
+                 w_cycles=1,
+                 projection_nullspace=lambda x:1,
+                 initial_guess=None, 
+                 iter=None, # ?
+                 maxiter=200, 
+                 name=None, 
+                 show=1, 
+                 rprecond=None, # ?
+                 nonconvergence_is_fatal=False, # ?
+                 retain_guess=False, # ?
+                 relativeconv=False, # ?
+                 callback=None): # ?
+        iterative.__init__(self, A[0], None, tolerance, initial_guess, iter, maxiter, name, show, rprecond, nonconvergence_is_fatal, retain_guess, relativeconv, callback)
+
+        self.presmoother = presmoother 
+        self.postsmoother = postsmoother 
+        self.coarse_grid_solver = coarse_grid_solver
+        self.A = A 
+        self.P = P 
+        self.num_presmoothing_steps = presmoothing_steps
+        self.num_postsmoothing_steps = postsmoothing_steps 
+        self.num_w_cycles = w_cycles
+        self.projection_nullspace = projection_nullspace 
+
+    def method(self, B, A, x, b, tolerance, maxiter, progress, relativeconv=False, shift=0, callback=None):
+        x, self.residuals, self.residual_rates = mgsolve(
+            A_list=self.A,
+            P_list=self.P,
+            presmoothers=self.presmoother,
+            postsmoothers=self.postsmoother,
+            coarse_grid_solver=self.coarse_grid_solver,
+            b=b,
+            x=x,
+            num_iterations=maxiter,
+            num_presmoothing_steps=self.num_presmoothing_steps,
+            num_postsmoothing_steps=self.num_postsmoothing_steps,
+            num_w_cycles=self.num_w_cycles,
+            projection_nullspace=self.projection_nullspace,
+            show=self.show,
+            rtol=tolerance 
+        )
+        return x, self.residuals, [], []
 
 
 def create_mesh_hierarchy(coarse_mesh, num_levels):
