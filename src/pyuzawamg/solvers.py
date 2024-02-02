@@ -237,8 +237,8 @@ class MGSolverBlock(iterative):
         self.presmoother = presmoother 
         self.postsmoother = postsmoother 
         self.coarse_grid_solver = coarse_grid_solver
-        self.A = A 
-        self.P = P 
+        self.list_A = A 
+        self.list_P = P 
         self.num_presmoothing_steps = presmoothing_steps
         self.num_postsmoothing_steps = postsmoothing_steps 
         self.num_w_cycles = w_cycles
@@ -246,8 +246,8 @@ class MGSolverBlock(iterative):
 
     def method(self, B, A, x, b, tolerance, maxiter, progress, relativeconv=False, shift=0, callback=None):
         x, self.residuals, self.residual_rates = mgsolve(
-            A_list=self.A,
-            P_list=self.P,
+            A_list=self.list_A,
+            P_list=self.list_P,
             presmoothers=self.presmoother,
             postsmoothers=self.postsmoother,
             coarse_grid_solver=self.coarse_grid_solver,
