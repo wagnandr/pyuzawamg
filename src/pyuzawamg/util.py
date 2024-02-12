@@ -10,10 +10,10 @@ def power_iteration(A, solver, verbose=False):
     u_old = A.create_vec()
     u_new.randomize()
     u_old.randomize()
-    solver.num_iterations = 1
+    solver = solver(maxiter=1)
     for i in range(40):
         # evaluate iteration matrix
-        u_new = solver.solve(A * u_old)
+        u_new = solver * (A * u_old)
         u_new = u_old - u_new
         # estimate eigenvalue
         n = u_old.inner(u_new)
