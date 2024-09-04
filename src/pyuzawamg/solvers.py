@@ -155,7 +155,8 @@ def mgsolve(
         # calculate initial residual
         r = b - A_list[0] * x
         res_start = res_prev = r.norm()
-        print(f'{-1} - rate = - ({res_start})')
+        if show > 0:
+            print(f'{-1} - rate = - ({res_start})')
         residuals.append(res_start)
         # iterate mg solver
         for j in range(num_iterations):
@@ -164,7 +165,12 @@ def mgsolve(
             r = b - A_list[0] * x
             projection_nullspace(r)
             res = r.norm()
-            res_rate = res / res_prev
+            res_rate = float('nan')
+            try:
+                res_rate = res / res_prev
+            except ZeroDivisionError:
+                # we accept ZeroDivisionErrors
+                pass
             if show > 0:
                 print(f'{j} - rate = {res_rate} ({res})')
             residuals.append(res)
@@ -193,7 +199,7 @@ class MGSolver:
         self.rtol = 1e-12
     
     def solve(self, b, x=None, residual_rate_list=[], residuals=[]):
-        mgsolve(
+        res = mgsolve(
             A_list=self.A,
             P_list=self.P,
             presmoothers=self.presmoother,
@@ -208,6 +214,7 @@ class MGSolver:
             projection_nullspace=self.projection_nullspace,
             show=self.show,
             rtol=self.rtol)
+        return res[0]
 
 
 class MGSolverBlock(iterative):

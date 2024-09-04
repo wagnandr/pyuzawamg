@@ -27,6 +27,39 @@ def power_iteration(A, solver, verbose=False):
     return ev
 
 
+def power_iteration2(A, verbose=False):
+    """
+    Calculates the spectral radius of A.
+    """
+    u_new = A.create_vec()
+    u_old = A.create_vec()
+    try:
+        u_new.randomize()
+        u_old.randomize()
+    except:
+        from block import block_vec
+        block_vec([u_new]).randomize()
+        block_vec([u_old]).randomize()
+    for i in range(40):
+        # evaluate iteration matrix
+        u_new = A * u_old
+        # estimate eigenvalue
+        n = u_old.inner(u_new)
+        o = u_old.inner(u_old)
+        ev = n/o
+        # normalize
+        try:
+            norm = u_new.norm()
+        except:
+            from block import block_vec
+            norm = block_vec([u_new]).norm()
+        u_new[:] /= norm
+        u_new, u_old = u_old, u_new
+        if verbose:
+            print(f'power iteration : {ev}')
+    return ev
+
+
 class CBCBlockWrapper:
     """
     Small wrapper to convert a block solver in our solver format.
