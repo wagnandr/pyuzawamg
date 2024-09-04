@@ -1,8 +1,6 @@
 # This file may be used to create an environment using:
 # $ conda create --name <env> --file <this file>
 # platform: linux-64
-cbc-block=3.0.0=pypi_0
-numpy=1.24.2=py311h8e6699e_0
 fenics=2019.1.0=py311h38be061_34
 fenics-dijitso=2019.1.0=py311h38be061_34
 fenics-dolfin=2019.1.0=py311h0a5b7eb_34
@@ -10,3 +8,9 @@ fenics-ffc=2019.1.0=py311h38be061_34
 fenics-fiat=2019.1.0=py311h38be061_34
 fenics-libdolfin=2019.1.0=h0f808bc_34
 fenics-ufl=2019.1.0=py311h38be061_34
+cbc-block=3.0.0=pypi_0
+numpy=1.24.2=py311h8e6699e_0
+pyamg=5.0.0=py311hcb41070_0
+scipy=1.10.1=py311h8e6699e_0
+sympy=1.11.1=py311h38be061_2
+tabulate=0.9.0=pypi_0
